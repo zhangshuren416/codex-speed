@@ -1,0 +1,7 @@
+# 统一用 LF 提交与检出：脚本里带 UTF-8 BOM，不希望换行被自动改写
+* text=auto eol=lf
+
+*.ps1 text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf

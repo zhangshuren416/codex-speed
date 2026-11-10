@@ -1,0 +1,15 @@
+# 运行时数据（HUD 的 pid/端口/日志、状态文件）
+data/
+*.log
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 依赖（本项目零依赖，留作兜底）
+node_modules/
+
+# dist
+dist/

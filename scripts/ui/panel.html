@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Codex Speed</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: var(--color-background-secondary, #171a1f);
+    --bg-soft: var(--color-background-tertiary, #101215);
+    --text: var(--color-text-primary, #e8eaed);
+    --dim: var(--color-text-secondary, #9aa4b2);
+    --dim2: var(--color-text-tertiary, #717b89);
+    --border: var(--color-border-secondary, #2a3038);
+    --accent: #10a37f;
+    --warn: #e8b34b;
+    --danger: #e06c75;
+    --mono: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+    --sans: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: var(--color-background-secondary, #f7f8fa);
+      --bg-soft: var(--color-background-tertiary, #eef1f5);
+      --text: var(--color-text-primary, #1b1f24);
+      --dim: var(--color-text-secondary, #5b6472);
+      --dim2: var(--color-text-tertiary, #7a8492);
+      --border: var(--color-border-secondary, #d8dee7);
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: var(--color-background-secondary, #f7f8fa);
+    --bg-soft: var(--color-background-tertiary, #eef1f5);
+    --text: var(--color-text-primary, #1b1f24);
+    --dim: var(--color-text-secondary, #5b6472);
+    --dim2: var(--color-text-tertiary, #7a8492);
+    --border: var(--color-border-secondary, #d8dee7);
+  }
+  :root[data-theme="dark"] {
+    --bg: var(--color-background-secondary, #171a1f);
+    --bg-soft: var(--color-background-tertiary, #101215);
+    --text: var(--color-text-primary, #e8eaed);
+    --dim: var(--color-text-secondary, #9aa4b2);
+    --dim2: var(--color-text-tertiary, #717b89);
+    --border: var(--color-border-secondary, #2a3038);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    padding: 12px;
+    color: var(--text);
+    font: 13px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    width: 100%;
+    max-width: 560px;
+    margin: 0 auto;
+    padding: 14px 16px 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg);
+  }
+  /* 会话右侧的 thread entrypoint 以 fullscreen 模式打开：铺满面板，去掉内联卡片边框 */
+  body.fullscreen { padding: 0; }
+  body.fullscreen .app {
+    max-width: none;
+    min-height: 100vh;
+    padding: 16px 18px 18px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--dim);
+    font-size: 11px;
+    font-weight: 650;
+    letter-spacing: .09em;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--dim2);
+    box-shadow: 0 0 0 3px transparent;
+  }
+  .dot.on { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+  .pill {
+    flex: none;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-soft);
+    color: var(--dim);
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .pill.on { color: var(--accent); }
+  .pill.warn { color: var(--warn); }
+  .big {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -.03em;
+  }
+  #tps {
+    font-size: 42px;
+    line-height: 1;
+    font-weight: 700;
+  }
+  .unit {
+    color: var(--dim);
+    font: 12px/1 var(--sans);
+  }
+  .sub {
+    min-height: 18px;
+    margin-top: 7px;
+    color: var(--dim);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .cell {
+    min-width: 0;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-soft);
+  }
+  .label {
+    color: var(--dim2);
+    font-size: 10px;
+    letter-spacing: .02em;
+  }
+  .value {
+    margin-top: 2px;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 16px;
+    font-weight: 650;
+  }
+  .hint {
+    margin-top: 2px;
+    color: var(--dim2);
+    font-size: 10px;
+    overflow-wrap: anywhere;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 64px;
+    margin: 10px 0 4px;
+  }
+  .session {
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    color: var(--dim);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+  .history {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .history-title {
+    margin-bottom: 4px;
+    color: var(--dim2);
+    font-size: 10px;
+  }
+  .hrow {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 2px 0;
+    color: var(--dim);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .hrow.latest { color: var(--text); }
+  .hrow .time {
+    flex: none;
+    color: var(--dim2);
+    font-family: var(--mono);
+    font-size: 10px;
+  }
+  .hrow .main {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hrow .extra {
+    flex: none;
+    color: var(--dim2);
+    font-size: 10px;
+  }
+  footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 7px;
+    color: var(--dim2);
+    font-size: 10px;
+  }
+  #stale { color: var(--warn); }
+  @media (max-width: 360px) {
+    body { padding: 8px; }
+    .app { padding: 12px; }
+    #tps { font-size: 34px; }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="head">
+    <div class="brand"><span class="dot" id="dot"></span>CODEX SPEED</div>
+    <div class="pill" id="phase">连接中…</div>
+  </div>
+  <div class="big"><span id="tps">—</span><span class="unit">tok/s</span></div>
+  <div class="sub" id="last">正在读取会话日志…</div>
+  <div class="grid">
+    <div class="cell">
+      <div class="label">本轮</div>
+      <div class="value" id="turnRate">—</div>
+      <div class="hint" id="turnMeta">—</div>
+    </div>
+    <div class="cell">
+      <div class="label">首 token 延迟</div>
+      <div class="value" id="ttft">—</div>
+      <div class="hint">提示就绪 → 首个 token</div>
+    </div>
+    <div class="cell">
+      <div class="label">平均 token 间隔</div>
+      <div class="value" id="mspt">—</div>
+      <div class="hint">由本轮 tok/s 推算</div>
+    </div>
+    <div class="cell">
+      <div class="label">推理占比</div>
+      <div class="value" id="reason">—</div>
+      <div class="hint" id="reasonMeta">—</div>
+    </div>
+  </div>
+  <canvas id="spark" height="64"></canvas>
+  <div class="session" id="session">会话：—</div>
+  <div class="history" id="history"></div>
+  <footer><span id="source">每次响应结束后更新</span><span id="stale"></span></footer>
+</div>
+<script>
+(() => {
+  "use strict";
+
+  const PROTOCOL_VERSION = "2026-01-26";
+  const state = {
+    hostContext: null,
+    timer: null,
+    inflight: false,
+    sessionId: "",
+    lastSampleAt: 0,
+    history: [],
+    ready: false,
+  };
+  let nextId = 1;
+  const pending = new Map();
+  const $ = (id) => document.getElementById(id);
+
+  function fmt(value, digits = 1) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toFixed(digits) : "—";
+  }
+  function num(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n.toLocaleString("zh-CN") : "—";
+  }
+  function pct(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? `${Math.round(n * 100)}%` : "—";
+  }
+
+  function send(message) {
+    window.parent.postMessage(message, "*");
+  }
+  function request(method, params) {
+    const id = nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`MCP Apps 请求超时: ${method}`));
+      }, 8000);
+      pending.set(id, { resolve, reject, timer });
+      send({ jsonrpc: "2.0", id, method, params });
+    });
+  }
+  function notify(method, params) {
+    send({ jsonrpc: "2.0", method, params });
+  }
+  function reply(id, result) {
+    send({ jsonrpc: "2.0", id, result });
+  }
+
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+    if (!message || message.jsonrpc !== "2.0") return;
+
+    if (message.id !== undefined && ("result" in message || "error" in message)) {
+      const item = pending.get(message.id);
+      if (!item) return;
+      clearTimeout(item.timer);
+      pending.delete(message.id);
+      if (message.error) item.reject(new Error(message.error.message || "MCP Apps error"));
+      else item.resolve(message.result);
+      return;
+    }
+
+    switch (message.method) {
+      case "ui/notifications/tool-result":
+        render(message.params);
+        break;
+      case "ui/notifications/host-context-changed":
+        applyHostContext(message.params);
+        break;
+      case "ui/resource-teardown":
+        stopPolling();
+        if (message.id !== undefined) reply(message.id, {});
+        break;
+      case "ping":
+        if (message.id !== undefined) reply(message.id, {});
+        break;
+      default:
+        break;
+    }
+  });
+
+  function applyHostContext(context) {
+    if (!context) return;
+    state.hostContext = { ...(state.hostContext || {}), ...context };
+    if (context.theme === "light" || context.theme === "dark") {
+      document.documentElement.dataset.theme = context.theme;
+    }
+    if (context.displayMode === "fullscreen" || context.displayMode === "inline") {
+      const body = document.body;
+      if (body && body.classList) {
+        body.classList.toggle("fullscreen", context.displayMode === "fullscreen");
+      }
+    }
+    const variables = context.styles && context.styles.variables;
+    if (variables && typeof variables === "object") {
+      for (const [name, value] of Object.entries(variables)) {
+        if (typeof value === "string" && name.startsWith("--")) {
+          document.documentElement.style.setProperty(name, value);
+        }
+      }
+    }
+    const fonts = context.styles && context.styles.css && context.styles.css.fonts;
+    if (typeof fonts === "string" && fonts) {
+      try {
+        const style = document.createElement("style");
+        style.textContent = fonts;
+        document.head.appendChild(style);
+      } catch {
+        /* ignore */
+      }
+    }
+    drawSpark();
+  }
+
+  function setPhase(text, tone) {
+    const pill = $("phase");
+    pill.textContent = text;
+    pill.className = `pill${tone ? ` ${tone}` : ""}`;
+    const dot = $("dot");
+    dot.className = `dot${tone ? ` ${tone}` : ""}`;
+  }
+
+  function phaseOf(live) {
+    if (live.stalled) return ["长时间无样本", "warn"];
+    if (live.active) {
+      const seconds = Number(live.generatingMs) > 0 ? Math.floor(Number(live.generatingMs) / 1000) : 0;
+      return [`生成中${seconds >= 1 ? ` ${seconds}s` : ""}`, "on"];
+    }
+    if (live.waitingTool) return ["工具中", "warn"];
+    if (live.generating) return ["等待首字", "warn"];
+    return ["空闲", ""];
+  }
+
+  function render(result) {
+    if (!result || typeof result !== "object") return;
+    if (result.isError) {
+      setPhase("读取失败", "warn");
+      $("last").textContent = "工具调用失败，请查看 Codex 日志。";
+      return;
+    }
+    const metrics = result.structuredContent || result;
+    if (!metrics.ok) {
+      setPhase("等待会话", "");
+      $("tps").textContent = "—";
+      $("last").textContent = metrics.hint || "还没有可用的会话数据。";
+      $("turnRate").textContent = "—";
+      $("turnMeta").textContent = "—";
+      $("ttft").textContent = "—";
+      $("mspt").textContent = "—";
+      $("reason").textContent = "—";
+      $("reasonMeta").textContent = "—";
+      $("session").textContent = "会话：—";
+      return;
+    }
+
+    const live = metrics.live || {};
+    const turn = metrics.turn || {};
+    const session = metrics.session || {};
+    const last = live.lastResponse || null;
+
+    const [label, tone] = phaseOf(live);
+    setPhase(label, tone);
+    $("tps").textContent = fmt(live.tokensPerSec);
+    $("tps").style.color = live.stale ? "var(--dim)" : "var(--text)";
+
+    if (last) {
+      const gen = last.genTokensPerSec == null
+        ? " · 纯生成 无条目样本"
+        : ` · 纯生成 ${fmt(last.genTokensPerSec)} tok/s`;
+      $("last").textContent =
+        `最近一次 ${fmt(last.tokensPerSec)} tok/s · ${num(last.outputTokens)} tok · ` +
+        `${fmt(last.seconds, 1)}s${gen} · ${fmt(Math.max(0, Number(last.ageMs) || 0) / 1000, 1)}s 前`;
+    } else {
+      $("last").textContent = "本次会话还没有速度样本。";
+    }
+
+    $("turnRate").textContent = Number(turn.avgTokensPerSec) > 0 ? `${fmt(turn.avgTokensPerSec)} tok/s` : "—";
+    const turnBits = [];
+    if (Number(turn.outputTokens) > 0) turnBits.push(`${num(turn.outputTokens)} tok`);
+    if (Number(turn.responses) > 0) turnBits.push(`${num(turn.responses)} 次响应`);
+    if (Number(turn.wallTokensPerSec) > 0 && Number(turn.responses) > 1) {
+      turnBits.push(`墙钟 ${fmt(turn.wallTokensPerSec)} tok/s`);
+    }
+    $("turnMeta").textContent = turnBits.length ? turnBits.join(" · ") : "—";
+
+    $("ttft").textContent =
+      turn.timeToFirstTokenMs == null ? "—" : `${fmt(Number(turn.timeToFirstTokenMs) / 1000, 2)}s`;
+    $("mspt").textContent =
+      turn.avgMsPerToken == null ? "—" : `${fmt(turn.avgMsPerToken, 1)} ms`;
+    $("reason").textContent =
+      turn.reasoningShare == null ? "—" : `${pct(turn.reasoningShare)} / ${fmt(turn.avgTokensPerSec)} tok/s`;
+    $("reasonMeta").textContent =
+      Number(turn.reasoningTokens) > 0 ? `${num(turn.reasoningTokens)} tok 推理` : "—";
+
+    const sessionBits = [`会话输出 ${num(session.outputTokens)} tok`];
+    if (Number(session.reasoningTokens) > 0) {
+      sessionBits.push(`推理 ${pct(session.reasoningShare)}`);
+    }
+    if (Number(session.avgTokensPerSec) > 0) {
+      sessionBits.push(`均值 ${fmt(session.avgTokensPerSec)} tok/s`);
+    }
+    if (Number(session.wallTokensPerSec) > 0) {
+      sessionBits.push(`墙钟 ${fmt(session.wallTokensPerSec)} tok/s`);
+    }
+    if (session.truncatedStart) sessionBits.push("只读日志尾部");
+    if (session.id) sessionBits.push(`ID ${String(session.id).slice(0, 8)}`);
+    $("session").textContent = sessionBits.join(" · ");
+
+    const history = Array.isArray(metrics.turnHistory)
+      ? metrics.turnHistory.slice(-5).reverse()
+      : [];
+    const historyEl = $("history");
+    historyEl.textContent = "";
+    if (history.length) {
+      historyEl.style.display = "";
+      const title = document.createElement("div");
+      title.className = "history-title";
+      title.textContent = "最近几轮";
+      historyEl.appendChild(title);
+      history.forEach((item, index) => {
+        const row = document.createElement("div");
+        row.className = index === 0 ? "hrow latest" : "hrow";
+        const time = document.createElement("span");
+        time.className = "time";
+        const endedAt = Number(item.endedAtMs);
+        time.textContent = Number.isFinite(endedAt)
+          ? new Date(endedAt).toLocaleTimeString("zh-CN", { hour12: false })
+          : "—";
+        const main = document.createElement("span");
+        main.className = "main";
+        main.textContent =
+          `${num(item.outputTokens)} tok · ` +
+          `${item.avgTokensPerSec == null ? "—" : `${fmt(item.avgTokensPerSec)} tok/s`}`;
+        const extra = document.createElement("span");
+        extra.className = "extra";
+        extra.textContent =
+          item.timeToFirstTokenMs == null ? "" : `首 ${fmt(Number(item.timeToFirstTokenMs) / 1000, 2)}s`;
+        row.appendChild(time);
+        row.appendChild(main);
+        row.appendChild(extra);
+        historyEl.appendChild(row);
+      });
+    } else {
+      historyEl.style.display = "none";
+    }
+
+    $("source").textContent = session.model
+      ? `模型 ${session.model}${session.effort ? ` / ${session.effort}` : ""}`
+      : "每次响应结束后更新";
+    $("stale").textContent = live.stale ? "最近样本已过期" : "";
+
+    if (session.id && session.id !== state.sessionId) {
+      state.sessionId = session.id;
+      state.history = [];
+      state.lastSampleAt = 0;
+    }
+    if (last && Number(last.atMs) > 0 && Number(last.atMs) !== state.lastSampleAt) {
+      state.lastSampleAt = Number(last.atMs);
+      state.history.push(Number(last.tokensPerSec) || 0);
+      while (state.history.length > 60) state.history.shift();
+    }
+    drawSpark();
+    reportSize();
+  }
+
+  function drawSpark() {
+    const canvas = $("spark");
+    if (!canvas || !canvas.getContext) return;
+    const ratio = Math.max(1, Number(window.devicePixelRatio) || 1);
+    const width = Math.max(1, Math.floor(canvas.clientWidth));
+    const height = 64;
+    if (canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#10a37f";
+    const border = getComputedStyle(document.documentElement).getPropertyValue("--border").trim() || "#2a3038";
+    ctx.strokeStyle = border;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, height - 1);
+    ctx.lineTo(width, height - 1);
+    ctx.stroke();
+
+    const values = state.history;
+    if (values.length < 2) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--dim2").trim() || "#717b89";
+      ctx.font = "10px " + (getComputedStyle(document.documentElement).getPropertyValue("--sans").trim() || "sans-serif");
+      ctx.fillText("等待更多响应样本", 4, height / 2);
+      return;
+    }
+
+    const max = Math.max(10, ...values);
+    const top = 4;
+    const bottom = height - 6;
+    const xAt = (index) => (index / (values.length - 1)) * width;
+    const yAt = (value) => bottom - (value / max) * (bottom - top);
+
+    ctx.beginPath();
+    values.forEach((value, index) => {
+      const x = xAt(index);
+      const y = yAt(value);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 2;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    ctx.lineTo(width, bottom);
+    ctx.lineTo(0, bottom);
+    ctx.closePath();
+    ctx.fillStyle = "rgba(16, 163, 127, 0.14)";
+    ctx.fill();
+  }
+
+  function showBridgeError(error) {
+    setPhase("未连接 MCP Apps", "warn");
+    $("tps").textContent = "—";
+    $("last").textContent =
+      "如果直接打开此页面，它无法访问 Codex 数据。请在 Codex 会话侧面板中使用；" +
+      "或使用浏览器面板 /panel。" + (error ? ` (${error.message})` : "");
+    $("turnRate").textContent = "—";
+    $("turnMeta").textContent = "—";
+    $("ttft").textContent = "—";
+    $("mspt").textContent = "—";
+    $("reason").textContent = "—";
+    $("reasonMeta").textContent = "—";
+    $("session").textContent = "会话：—";
+  }
+
+  let lastSize = "";
+  function reportSize() {
+    if (!state.ready) return;
+    const width = Math.max(1, document.documentElement.scrollWidth);
+    const height = Math.max(1, document.documentElement.scrollHeight);
+    const key = `${width}x${height}`;
+    if (key === lastSize) return;
+    lastSize = key;
+    notify("ui/notifications/size-changed", { width, height });
+  }
+
+  async function poll() {
+    if (state.inflight) return;
+    state.inflight = true;
+    try {
+      const result = await request("tools/call", {
+        name: "get_speed_snapshot",
+        arguments: {},
+      });
+      render(result);
+    } catch (error) {
+      if (state.ready) {
+        setPhase("读取失败", "warn");
+        $("stale").textContent = error.message || "MCP Apps 请求失败";
+      }
+    } finally {
+      state.inflight = false;
+      reportSize();
+    }
+  }
+
+  function startPolling() {
+    if (state.timer) return;
+    state.ready = true;
+    poll();
+    state.timer = setInterval(poll, 1000);
+  }
+
+  /**
+   * 侧面板是唯一目标形态：
+   *   - thread entrypoint 打开时已经是 fullscreen，直接跳过；
+   *   - 如果宿主把面板以 inline 方式挂载（旧缓存/异常入口），主动请求 fullscreen，
+   *     Codex 会把它收进会话右侧的侧面板标签，而不是留在对话流里。
+   */
+  async function ensureFullscreen() {
+    const context = state.hostContext || {};
+    if (context.displayMode === "fullscreen") return;
+    const modes = context.availableDisplayModes;
+    if (!Array.isArray(modes) || !modes.includes("fullscreen")) return;
+    try {
+      const result = await request("ui/request-display-mode", { mode: "fullscreen" });
+      if (result && result.mode === "fullscreen") {
+        state.hostContext = { ...(state.hostContext || {}), displayMode: "fullscreen" };
+        if (document.body && document.body.classList) {
+          document.body.classList.add("fullscreen");
+        }
+        drawSpark();
+        reportSize();
+      }
+    } catch {
+      /* 老宿主不支持就保持 inline，不影响数据展示 */
+    }
+  }
+
+  function stopPolling() {
+    if (state.timer) clearInterval(state.timer);
+    state.timer = null;
+    state.ready = false;
+  }
+
+  async function initialize() {
+    try {
+      const result = await request("ui/initialize", {
+        appInfo: { name: "codex-speed-panel", version: "1.0.0" },
+        appCapabilities: { availableDisplayModes: ["inline", "fullscreen"] },
+        protocolVersion: PROTOCOL_VERSION,
+      });
+      applyHostContext(result && result.hostContext);
+      notify("ui/notifications/initialized", {});
+      startPolling();
+      setTimeout(reportSize, 0);
+      ensureFullscreen();
+    } catch (error) {
+      showBridgeError(error);
+    }
+  }
+
+  try {
+    new ResizeObserver(reportSize).observe(document.body);
+  } catch {
+    /* ResizeObserver unavailable: fixed size panel is fine */
+  }
+  window.addEventListener("beforeunload", stopPolling);
+  initialize();
+})();
+</script>
+</body>
+</html>

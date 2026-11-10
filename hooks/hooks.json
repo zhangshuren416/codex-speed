@@ -1,0 +1,44 @@
+{
+  "description": "Codex Speed: track the active session so the speed meter follows the right rollout file.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "commandWindows": "node \"${PLUGIN_ROOT}/scripts/hook.mjs\"",
+            "async": true,
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
