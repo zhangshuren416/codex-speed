@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "codex-speed",
-  "version": "0.1.0-dev",
+  "version": "0.1.0-rc1",
   "description": "Live reasoning/output throughput meter for Codex sessions, with a per-conversation MCP Apps side panel and an always-on-top Windows HUD.",
   "author": {
     "name": "codex-speed"
@@ -20,7 +20,7 @@
       "interface": {
         "displayName": "Codex Speed",
         "shortDescription": "实时推理速度仪表盘",
-        "longDescription": "读取本地 Codex 会话日志，实时计算输出吞吐（tok/s）、首 token 延迟与推理占比。在 Codex 会话右侧的「速度面板」标签页查看当前会话，或在 Windows 使用置顶悬浮窗；面板按 threadId 隔离，不会串会话。",
+        "longDescription": "读取本地 Codex 会话日志，实时计算输出吞吐（tok/s）与首 token 延迟。在 Codex 会话右侧的「速度面板」标签页查看当前会话，或在 Windows 使用置顶悬浮窗；面板按 threadId 隔离，不会串会话。",
         "developerName": "codex-speed",
         "category": "Developer Tools",
         "capabilities": [

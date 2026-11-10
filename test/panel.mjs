@@ -23,6 +23,7 @@ function check(name, cond, detail = "") {
 }
 
 const messages = [];
+const listeners = new Map();
 let onMessage = null;
 const elements = new Map();
 
@@ -31,11 +32,16 @@ function makeElement(id) {
     id,
     textContent: "",
     className: "",
+    title: "",
+    disabled: false,
     style: { color: "", display: "", setProperty() {} },
     dataset: {},
     children: [],
     appendChild(child) {
       this.children.push(child);
+    },
+    addEventListener(name, handler) {
+      listeners.set(`${id}:${name}`, handler);
     },
     clientWidth: 360,
     clientHeight: 64,
@@ -65,14 +71,12 @@ function makeElement(id) {
 for (const id of [
   "phase",
   "dot",
+  "hudToggle",
   "tps",
-  "last",
-  "turnRate",
-  "turnMeta",
+  "liveRate",
   "ttft",
   "mspt",
-  "reason",
-  "reasonMeta",
+  "turnTokens",
   "spark",
   "session",
   "history",
@@ -141,6 +145,7 @@ const metrics = {
     model: "test",
     effort: "high",
   },
+  hud: { supported: true, running: false },
   turnHistory: [
     { id: "t0", endedAtMs: Date.now() - 60_000, outputTokens: 80, avgTokensPerSec: 40, timeToFirstTokenMs: 700 },
     { id: "t1", endedAtMs: Date.now(), outputTokens: 100, avgTokensPerSec: 51.3, timeToFirstTokenMs: 500 },
@@ -166,10 +171,19 @@ window.parent.postMessage = (message) => {
   } else if (message.method === "ui/request-display-mode") {
     respond(message.id, { mode: "fullscreen" });
   } else if (message.method === "tools/call") {
-    respond(message.id, {
-      content: [{ type: "text", text: "ok" }],
-      structuredContent: metrics,
-    });
+    const name = message.params?.name;
+    if (name === "show_speed_hud") {
+      metrics.hud.running = true;
+      respond(message.id, { structuredContent: { supported: true, running: true } });
+    } else if (name === "hide_speed_hud") {
+      metrics.hud.running = false;
+      respond(message.id, { structuredContent: { stopped: true, pid: 123 } });
+    } else {
+      respond(message.id, {
+        content: [{ type: "text", text: "ok" }],
+        structuredContent: metrics,
+      });
+    }
   }
 };
 
@@ -221,10 +235,49 @@ if (!script) {
     toolCalls.some((message) => message.params?.name === "get_speed_snapshot"),
     toolCalls.map((message) => message.params?.name).join(",")
   );
-  check("panel: 渲染 tok/s", elements.get("tps").textContent === "52.0", elements.get("tps").textContent);
+  check("panel: 大数字渲染本轮速度", elements.get("tps").textContent === "51.3", elements.get("tps").textContent);
+  check(
+    "panel: 渲染最近 3 次平均",
+    elements.get("liveRate").textContent === "52.0 tok/s",
+    elements.get("liveRate").textContent
+  );
   check("panel: 渲染首 token 延迟", elements.get("ttft").textContent === "0.50s", elements.get("ttft").textContent);
   check("panel: 渲染平均 token 间隔", elements.get("mspt").textContent === "19.5 ms", elements.get("mspt").textContent);
+  check(
+    "panel: 渲染本轮总 token",
+    elements.get("turnTokens").textContent === "100 tok",
+    elements.get("turnTokens").textContent
+  );
   check("panel: 渲染状态", elements.get("phase").textContent === "空闲", elements.get("phase").textContent);
+  check(
+    "panel: HUD 按钮初始为打开",
+    elements.get("hudToggle").textContent === "打开悬浮窗",
+    elements.get("hudToggle").textContent
+  );
+  const hudClick = listeners.get("hudToggle:click");
+  check("panel: HUD 按钮已绑定点击", typeof hudClick === "function");
+  if (hudClick) {
+    await hudClick();
+    check(
+      "panel: HUD 按钮调用 show_speed_hud",
+      messages.some((message) => message.method === "tools/call" && message.params?.name === "show_speed_hud")
+    );
+    check(
+      "panel: HUD 按钮切换为关闭",
+      elements.get("hudToggle").textContent === "关闭悬浮窗",
+      elements.get("hudToggle").textContent
+    );
+    await hudClick();
+    check(
+      "panel: HUD 按钮调用 hide_speed_hud",
+      messages.some((message) => message.method === "tools/call" && message.params?.name === "hide_speed_hud")
+    );
+    check(
+      "panel: HUD 按钮切回打开",
+      elements.get("hudToggle").textContent === "打开悬浮窗",
+      elements.get("hudToggle").textContent
+    );
+  }
   const historyRows = elements.get("history").children.filter((child) => child.className.includes("hrow"));
   check(
     "panel: 渲染最近几轮",

@@ -51,6 +51,9 @@ try {
   Add-Type -Namespace CodexSpeed -Name Native -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("user32.dll")]
 public static extern bool SetProcessDPIAware();
+
+[System.Runtime.InteropServices.DllImport("user32.dll")]
+public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
 '@ -ErrorAction Stop
   [CodexSpeed.Native]::SetProcessDPIAware() | Out-Null
 } catch { }
@@ -252,6 +255,18 @@ $form.Add_KeyDown({
   if ($e.KeyCode -eq [System.Windows.Forms.Keys]::Escape) { $form.Close() }
 })
 
+# 窗口真正显示后再强制一次置顶。只在构造时设置 TopMost，在部分
+# Start-Process / 无激活启动场景下可能不会落到 WS_EX_TOPMOST 上。
+$form.Add_Shown({
+  if ($AlwaysOnTop) {
+    $form.TopMost = $true
+    try {
+      # HWND_TOPMOST=-1，SWP_NOSIZE|SWP_NOMOVE|SWP_NOACTIVATE
+      [CodexSpeed.Native]::SetWindowPos($form.Handle, [IntPtr](-1), 0, 0, 0, 0, 0x0013) | Out-Null
+    } catch { }
+  }
+})
+
 # ---------------------------------------------------------------- drawing
 function Format-Compact {
   param([double]$Value)
@@ -364,20 +379,15 @@ $panel.Add_Paint({
   $fontUnit = Get-CachedFont -Kind ui -Size (10 * $Scale)
   $g.DrawString('tok/s', $fontUnit, $brushDim, [float]($pad + $bigSize.Width - 6 * $ui), [float]($bigY + 26 * $ui))
 
-  # ---- 第三行：本轮 / 推理占比
+  # ---- 第三行：本轮
   $fontSmall = Get-CachedFont -Kind ui -Size (8.5 * $Scale)
   $lineY = [float]($bigY + 46 * $ui)
 
   $leftText = '本轮 —'
-  $rightText = '推理 —'
   if ($ok) {
     $leftText = '本轮 ' + (Format-Compact -Value ([double]$d.turn.outputTokens)) + ' tok · ' + ('{0:N0}' -f [double]$d.turn.avgTokensPerSec) + ' t/s'
-    $rightText = ('推理 {0:N0}%' -f ([double]$d.session.reasoningShare * 100))
   }
   $g.DrawString($leftText, $fontSmall, $brushDim, [float]$pad, $lineY)
-
-  $rightSize = $g.MeasureString($rightText, $fontSmall)
-  $g.DrawString($rightText, $fontSmall, $brushDim, [float]($W - $pad - $rightSize.Width), $lineY)
 
   # ---- 第四行：迷你速度曲线（每个点 = 一次响应）
   $sparkTop = [int]($lineY + 17 * $ui)

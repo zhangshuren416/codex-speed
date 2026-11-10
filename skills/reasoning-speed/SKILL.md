@@ -56,6 +56,6 @@ description: 查看 Codex 会话的实时推理/输出速度（tok/s）、推理
 - 不要声称这是服务端指标；这是本地日志推算值，会滞后于真实流式速度，粒度就是“每次响应”。
 - 工具调用期间没有样本，属于正常现象：模型没在生成，不是“速度掉了”。
 - 默认按本次工具调用的 `_meta.threadId` 读取当前会话，**不会串到别的会话**；只有显式传 `session` 钉住时才查别的会话。若返回 `ok: false` / `reason: "session-not-found"`，说明当前会话还没有落盘日志，让用户先发一条消息，不要改读“最近活跃会话”。如果之前钉住过别的会话，传 `session: "auto"` 取消钉住。
-- HUD 仅支持 Windows。其他平台建议改用浏览器打开 `http://127.0.0.1:<port>/panel`（端口由 `show_speed_hud` 的返回或 `get_reasoning_speed` 的 `hud.port` 给出）。
+- HUD 仅支持 Windows。其他平台请使用 Codex 会话右侧的速度面板。侧面板右上角有「打开悬浮窗 / 关闭悬浮窗」按钮，也可以直接用对话里的 `show_speed_hud` / `hide_speed_hud`。
 - 速度面板是 app-only 的 thread entrypoint：用户从会话右侧的「速度面板」标签页打开，打开后会每秒自动刷新。模型没有打开侧面板的工具，不要调用 `show_speed_panel`，也不要声称“已经打开”；Codex 当前没有自动打开侧面板的 API。面板按 `threadId` 隔离，每个会话独立。
 - 悬浮窗启动失败时，把错误原因如实转述，不要反复重试。

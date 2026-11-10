@@ -187,6 +187,19 @@ try {
     Boolean(panelTool?._meta?.["openai/ui"]?.entrypoints?.some((e) => e.type === "thread")),
     JSON.stringify(panelTool?._meta?.["openai/ui"])
   );
+  const hudTool = toolsList.find((t) => t.name === "show_speed_hud");
+  const hideHudTool = toolsList.find((t) => t.name === "hide_speed_hud");
+  check(
+    "HUD 开关允许侧面板和模型调用",
+    hudTool?._meta?.ui?.visibility?.includes("app") === true &&
+      hudTool?._meta?.ui?.visibility?.includes("model") === true &&
+      hideHudTool?._meta?.ui?.visibility?.includes("app") === true &&
+      hideHudTool?._meta?.ui?.visibility?.includes("model") === true,
+    JSON.stringify({
+      show: hudTool?._meta?.ui?.visibility,
+      hide: hideHudTool?._meta?.ui?.visibility,
+    })
+  );
 
   const speed = await request("tools/call", { name: "get_reasoning_speed", arguments: {} });
   const text = speed.result?.content?.[0]?.text ?? "";
@@ -330,8 +343,9 @@ try {
     check("HTTP /api/speed 可用", body.ok === true, String(body.ok));
     check("HTTP /api/speed 未开放跨域读取", !res.headers.get("access-control-allow-origin"));
     const panel = await fetch(`http://127.0.0.1:${port}/panel`);
-    const html = await panel.text();
-    check("HTTP /panel 可用", html.includes("CODEX SPEED"));
+    check("HTTP /panel 已移除", panel.status === 404, String(panel.status));
+    const sessions = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+    check("HTTP /api/sessions 已移除", sessions.status === 404, String(sessions.status));
   }
 
   const hide = await request("tools/call", { name: "hide_speed_hud", arguments: {} });

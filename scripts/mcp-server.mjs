@@ -20,6 +20,21 @@ const PLUGIN_ROOT = process.env.PLUGIN_ROOT
   ? path.resolve(process.env.PLUGIN_ROOT)
   : path.resolve(__dirname, "..");
 
+// 版本号只在 plugin.json 里维护；打包脚本命名归档也用同一个字段，避免两处漂移。
+const PLUGIN_VERSION = readPluginVersion();
+
+function readPluginVersion() {
+  try {
+    const raw = fs.readFileSync(path.join(PLUGIN_ROOT, "plugin.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed.version === "string" && parsed.version
+      ? parsed.version
+      : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 const DATA_DIR = ensureDir(pluginDataDir());
 const RUN_DIR = ensureDir(path.join(DATA_DIR, "run"));
 const PORT_FILE = path.join(RUN_DIR, "hud-port.json");
@@ -52,7 +67,6 @@ const HUD_PORT_PREFERENCE = [8787, 8788, 8789, 0];
 const TICK_MS = 1000;
 
 let tickTimer = null;
-let hudProcess = null;
 let hudPort = null;
 let httpServer = null;
 let httpReady = null;
@@ -79,13 +93,13 @@ function readUiPanelHtml() {
       "<body style=\"font:13px sans-serif;padding:16px;background:#171a1f;color:#e8eaed\">" +
       "<strong>Codex Speed 面板资源缺失</strong><p>" +
       String(err.message || err) +
-      "</p><p>请重新安装插件，或使用浏览器面板 /panel。</p></body>"
+      "</p><p>请重新安装插件。</p></body>"
     );
   }
 }
 
 /* ------------------------------------------------------------------ *
- * HTTP 接口（给 HUD / 浏览器面板用）
+ * HTTP 接口（给 HUD 用）
  * ------------------------------------------------------------------ */
 function startHttp() {
   if (httpServer) return Promise.resolve(hudPort);
@@ -107,21 +121,8 @@ function startHttp() {
       res.end(body);
       return;
     }
-    if (url.pathname === "/api/sessions") {
-      const body = JSON.stringify({ sessions: monitor.listSessions(12) });
-      res.writeHead(200, {
-        "content-type": "application/json; charset=utf-8",
-        "cache-control": "no-store",
-      });
-      res.end(body);
-      return;
-    }
     if (url.pathname === "/healthz") {
       res.writeHead(200, { "content-type": "text/plain" }).end("ok");
-      return;
-    }
-    if (url.pathname === "/" || url.pathname === "/panel") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(PANEL_HTML);
       return;
     }
     res.writeHead(404).end("not found");
@@ -215,7 +216,7 @@ function hudStatus() {
     supported: IS_WINDOWS || Boolean(process.env.CODEX_SPEED_HUD_ALLOW_NONWINDOWS),
     running,
     // 刚启动时 HUD 可能还没来得及写 pid 文件，退回子进程 PID
-    pid: running ? readHudPid() ?? hudProcess?.pid ?? null : null,
+    pid: running ? readHudPid() : null,
     port: hudPort,
     shell: resolvePowerShell(),
     script: hudScriptPath(),
@@ -362,7 +363,6 @@ function clearHudPidFile(pid) {
 
 /** HUD 可能由上一个 MCP server 实例启动，所以以 PID 文件为准，而不是本地句柄。 */
 function hudIsAlive() {
-  if (hudProcess && !hudProcess.killed) return true;
   const pid = readHudPid();
   if (!pid) return false;
 
@@ -405,9 +405,9 @@ async function launchHud({ opacity, alwaysOnTop = true, scale = 1 } = {}) {
   await ensureMonitoring();
   if (hudIsAlive()) {
     const pid = readHudPid();
-    // 同一实例拉起的子进程可以直接信任；其他实例留下的 PID 文件需要深校验，
-    // 避免一个复用了 PID 的无关 powershell 一直挡住新窗口。
-    if (!hudProcess && pid) {
+    // PID 文件可能来自上一个 MCP server 实例；先深校验，避免 PID 复用后
+    // 一个无关的 powershell 一直挡住新窗口。
+    if (pid) {
       const check = verifyHudPid(pid);
       if (check.verified && !check.ok) {
         clearHudPidFile(pid);
@@ -422,7 +422,7 @@ async function launchHud({ opacity, alwaysOnTop = true, scale = 1 } = {}) {
     throw new Error(
       "HUD 需要 Windows 的 PowerShell/WinForms。当前平台是 " +
         process.platform +
-        "，可以改用浏览器打开 /panel 面板，或设置 CODEX_SPEED_HUD_ALLOW_NONWINDOWS=1 强制尝试。"
+        "，请使用 Codex 会话右侧的速度面板，或设置 CODEX_SPEED_HUD_ALLOW_NONWINDOWS=1 强制尝试。"
     );
   }
 
@@ -457,17 +457,39 @@ async function launchHud({ opacity, alwaysOnTop = true, scale = 1 } = {}) {
   }
 
   const cmd = resolvePowerShell();
-  const child = spawn(cmd, args, {
-    detached: true,
+  // 不能直接 spawn(..., { detached: true })：在 Windows 上这会让 powershell.exe
+  // 立即以 code 0 退出，HUD 窗口根本不会出现。改用 Start-Process：它创建的进程
+  // 脱离 MCP server 独立存活，-NoNewWindow 让它继承 hidden wrapper 的控制台，
+  // 所以不会有黑框，WinForms 窗口仍然正常显示。
+  const quoteArg = (value) => {
+    const text = String(value);
+    // 只给含空格/引号的参数加引号；像 -AlwaysOnTop 这样的开关一旦被引号包住，
+    // PowerShell 会当成普通字符串，开关就失效（HUD 窗口不会置顶）。
+    return /[\s"]/.test(text) ? `"${text.replace(/"/g, '\\"')}"` : text;
+  };
+  const quoteSingle = (value) => `'${String(value).replace(/'/g, "''")}'`;
+  const innerArgs = args.map(quoteArg).join(" ");
+  const launchScript = [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "try {",
+    `  Start-Process -FilePath ${quoteSingle(cmd)} -ArgumentList ${quoteSingle(innerArgs)} -NoNewWindow | Out-Null`,
+    "} catch {",
+    "  [Console]::Error.WriteLine($_.Exception.Message)",
+    "  exit 1",
+    "}",
+  ].join("\n");
+  const encoded = Buffer.from(launchScript, "utf16le").toString("base64");
+
+  const wrapper = spawn(cmd, ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
     stdio: ["ignore", "ignore", logFd],
-    // 必须隐藏控制台窗口：powershell.exe 是控制台程序，不隐藏的话每次开 HUD
-    // 都会在桌面上闪一个黑框（WinForms 窗口本身不受影响）
+    // wrapper 的控制台必须隐藏；HUD 继承这个隐藏控制台，WinForms 窗口不受影响
     windowsHide: true,
     cwd: PLUGIN_ROOT,
   });
   // spawn 失败（找不到 powershell.exe / pwsh）是异步 error 事件；
   // 不监听会让整个 MCP server 直接崩掉
-  child.on("error", () => {
+  wrapper.on("error", () => {
     /* 由下面的 await 统一处理 */
   });
   if (typeof logFd === "number") {
@@ -477,37 +499,55 @@ async function launchHud({ opacity, alwaysOnTop = true, scale = 1 } = {}) {
       /* 子进程已复制句柄 */
     }
   }
-  child.unref();
-  hudProcess = child;
-  child.on("exit", (code, signal) => {
-    if (hudProcess === child) hudProcess = null;
-    log("hud exited", `code=${code}`, `signal=${signal}`);
-  });
-  log("hud spawned", cmd, args.join(" "));
+  log("hud spawn wrapper", cmd, args.join(" "));
 
-  // 等一小会儿看它是不是秒退：WinForms 起不来时 PowerShell 会立刻以非 0 退出；
-  // 找不到 powershell.exe 时则只会触发 error 事件。
-  const exited = await new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(null), 900);
+  // 只等 wrapper 完成 Start-Process；真正的 HUD 进程在后面用 PID 文件确认。
+  const wrapperExit = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve({ timeout: true }), 2500);
     timer.unref?.();
-    child.once("exit", (code, signal) => {
+    wrapper.once("exit", (code, signal) => {
       clearTimeout(timer);
       resolve({ code, signal });
     });
-    child.once("error", (err) => {
+    wrapper.once("error", (err) => {
       clearTimeout(timer);
       resolve({ error: err });
     });
   });
 
-  if (exited) {
+  if (wrapperExit.error || wrapperExit.timeout || wrapperExit.code !== 0) {
     const status = hudStatus();
     return {
       ...status,
       running: false,
-      error: exited.error
-        ? `无法启动 ${cmd}：${exited.error.code ?? ""} ${exited.error.message}`.trim()
-        : `PowerShell 启动后立即退出（code=${exited.code}, signal=${exited.signal}）`,
+      error: wrapperExit.error
+        ? `无法启动 ${cmd}：${wrapperExit.error.code ?? ""} ${wrapperExit.error.message}`.trim()
+        : wrapperExit.timeout
+          ? "启动 HUD 的 PowerShell 超时"
+          : `启动 HUD 失败（code=${wrapperExit.code}, signal=${wrapperExit.signal}）`,
+      logFile: HUD_LOG_FILE,
+      logTail: readLogTail(12),
+    };
+  }
+
+  // HUD 启动后在 forms 显示前写 PID 文件；等它出现并确认进程还活着。
+  const deadline = Date.now() + 3000;
+  let hudPid = null;
+  while (Date.now() < deadline) {
+    const pid = readHudPid();
+    if (pid && processAlive(pid)) {
+      hudPid = pid;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  if (!hudPid) {
+    const status = hudStatus();
+    return {
+      ...status,
+      running: false,
+      error: "HUD 未能在预期时间内启动",
       logFile: HUD_LOG_FILE,
       logTail: readLogTail(12),
     };
@@ -525,7 +565,7 @@ function readLogTail(lines = 15) {
 }
 
 async function stopHud({ force = false } = {}) {
-  const pid = readHudPid() ?? hudProcess?.pid ?? null;
+  const pid = readHudPid();
   if (!pid) {
     return { stopped: false, reason: "not-running" };
   }
@@ -577,7 +617,6 @@ async function stopHud({ force = false } = {}) {
     return { stopped: false, pid, reason: "still-running", error: error ?? "进程仍在运行" };
   }
 
-  hudProcess = null;
   clearHudPidFile(pid);
   return { stopped: true, pid };
 }
@@ -644,7 +683,7 @@ const TOOLS = [
     name: "show_speed_hud",
     title: "打开速度悬浮窗",
     description:
-      "在 Windows 上打开一个置顶的小窗，实时显示 tok/s、本轮 token、推理占比和最近速度曲线。可设置透明度与缩放。",
+      "在 Windows 上打开一个置顶的小窗，实时显示 tok/s、本轮 token 和最近速度曲线。可设置透明度与缩放。",
     inputSchema: {
       type: "object",
       properties: {
@@ -655,6 +694,8 @@ const TOOLS = [
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    // 侧面板的「打开悬浮窗」按钮也调用这个工具。
+    _meta: { ui: { visibility: ["model", "app"] } },
   },
   {
     name: "hide_speed_hud",
@@ -662,6 +703,8 @@ const TOOLS = [
     description: "关闭由本插件打开的速度悬浮窗。",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    // 侧面板的「关闭悬浮窗」按钮也调用这个工具。
+    _meta: { ui: { visibility: ["model", "app"] } },
   },
 ];
 
@@ -721,7 +764,7 @@ async function callTool(name, args = {}, meta = null) {
         text =
           `悬浮窗未能启动：${status.error ?? "未知原因"}。` +
           (status.logTail ? `\n最近的 HUD 日志：\n${status.logTail}` : "") +
-          `\n完整日志：${status.logFile ?? "(无)"}\n可以改用浏览器面板：http://127.0.0.1:${status.port}/panel`;
+          `\n完整日志：${status.logFile ?? "(无)"}\n可以改用 Codex 会话右侧的速度面板。`;
       }
       return { structuredContent: status, content: [{ type: "text", text }] };
     }
@@ -869,7 +912,7 @@ async function handleMessage(msg) {
         resources: {},
         extensions: { "io.modelcontextprotocol/ui": {} },
       },
-      serverInfo: { name: "codex-speed", version: "0.1.0-dev" },
+      serverInfo: { name: "codex-speed", version: PLUGIN_VERSION },
       instructions:
         "这是 Codex 本地速度计。回答“多快/速度/为什么慢”时调用 get_reasoning_speed；它默认按当前会话的 threadId 读取，不会串到别的会话。用户想在 Codex 会话右侧看实时面板时，请让用户点击会话侧边的「速度面板」标签页——该入口是 app-only，模型没有打开侧面板的工具，也不要在对话里声称已经打开。Windows 置顶小窗用 show_speed_hud。所有数据来自本地会话日志；传 session 参数会把该会话钉住，传 session=auto 可恢复自动跟随。",
     });
@@ -984,99 +1027,3 @@ process.stdin.on("end", () => {
 
 log("codex-speed mcp server started", `pid=${process.pid}`, `root=${PLUGIN_ROOT}`, `data=${DATA_DIR}`);
 ensureMonitoring();
-
-/* ------------------------------------------------------------------ *
- * 浏览器面板（非 Windows 或不想用 HUD 时的替代视图）
- * ------------------------------------------------------------------ */
-const PANEL_HTML = `<!doctype html>
-<html lang="zh-CN"><meta charset="utf-8">
-<title>Codex Speed</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<style>
-  :root { color-scheme: dark; }
-  body { margin:0; font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-         background:#101215; color:#e8eaed; display:grid; place-items:center; min-height:100vh; }
-  .card { width:min(560px,92vw); background:#171a1f; border:1px solid #262b33; border-radius:14px; padding:20px 22px; }
-  h1 { font-size:15px; margin:0 0 14px; font-weight:600; color:#9aa4b2; letter-spacing:.02em; }
-  .big { font-size:52px; font-weight:650; line-height:1; letter-spacing:-.02em; }
-  .unit { font-size:16px; color:#7c8798; margin-left:6px; }
-  .row { display:flex; justify-content:space-between; padding:6px 0; border-top:1px solid #22262d; }
-  .row span:first-child { color:#8b95a5; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; }
-  .on { background:#14351f; color:#5ee08a; } .off { background:#2a2d33; color:#98a2b3; }
-  canvas { width:100%; height:70px; display:block; margin:10px 0 4px; }
-  .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; color:#7c8798; word-break:break-all; }
-</style>
-<div class="card">
-  <h1>CODEX SPEED <span id="state" class="badge off">空闲</span></h1>
-  <div><span class="big" id="tps">—</span><span class="unit">tok/s</span></div>
-  <canvas id="spark" width="1000" height="140"></canvas>
-  <div class="row"><span>最近一次响应</span><span id="last">—</span></div>
-  <div class="row"><span>最近 60 秒均值</span><span id="avg60">—</span></div>
-  <div class="row"><span>本轮</span><span id="turn">—</span></div>
-  <div class="row"><span>会话输出 / 推理占比</span><span id="session">—</span></div>
-  <div class="row"><span>模型</span><span id="model">—</span></div>
-  <div class="row"><span>会话文件</span><span class="mono" id="file">—</span></div>
-  <div class="row"><span>口径</span><span class="mono">每次响应一条样本；速度 = 输出 token /（提示就绪 → 响应结束）</span></div>
-</div>
-<script>
-const history = [];
-let lastSampleAt = 0;
-let lastSessionId = '';
-const canvas = document.getElementById('spark');
-const ctx = canvas.getContext('2d');
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (history.length < 2) return;
-  const max = Math.max(10, ...history);
-  ctx.beginPath();
-  history.forEach((v, i) => {
-    const x = (i / (history.length - 1)) * canvas.width;
-    const y = canvas.height - (v / max) * (canvas.height - 8) - 4;
-    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-  });
-  ctx.strokeStyle = '#10a37f'; ctx.lineWidth = 3; ctx.stroke();
-  ctx.lineTo(canvas.width, canvas.height); ctx.lineTo(0, canvas.height); ctx.closePath();
-  ctx.fillStyle = 'rgba(16,163,127,.18)'; ctx.fill();
-}
-async function loop() {
-  try {
-    const r = await fetch('/api/speed', { cache: 'no-store' });
-    const d = await r.json();
-    if (!d.ok) {
-      document.getElementById('tps').textContent = '—';
-      document.getElementById('state').textContent = '等待会话';
-      document.getElementById('state').className = 'badge off';
-      return;
-    }
-    const sid = d.session.id ?? '';
-    if (sid !== lastSessionId) {
-      lastSessionId = sid;
-      history.length = 0;
-      lastSampleAt = 0;
-      draw();
-    }
-    document.getElementById('tps').textContent = d.live.tokensPerSec.toFixed(1);
-    document.getElementById('state').textContent = d.live.stalled ? '长时间无样本' : d.live.active ? '生成中' : d.live.waitingTool ? '工具中' : (d.live.generating ? '等待首字' : '空闲');
-    document.getElementById('state').className = 'badge ' + (d.live.active ? 'on' : 'off');
-    document.getElementById('last').textContent = d.live.lastResponse
-      ? d.live.lastResponse.tokensPerSec.toFixed(1) + ' tok/s (' + d.live.lastResponse.outputTokens + ' tokens)'
-      : '—';
-    document.getElementById('avg60').textContent = d.live.recentAvg60s.toFixed(1) + ' tok/s';
-    document.getElementById('turn').textContent = d.turn.outputTokens + ' tokens / ' + d.turn.responses + ' 次响应 = ' + d.turn.avgTokensPerSec.toFixed(1) + ' tok/s';
-    document.getElementById('session').textContent = d.session.outputTokens + ' / ' + (d.session.reasoningShare * 100).toFixed(0) + '% 推理';
-    document.getElementById('model').textContent = (d.session.model || '—') + (d.session.effort ? ' / ' + d.session.effort : '');
-    document.getElementById('file').textContent = d.session.file || '—';
-    // 样本按“每次响应”产生，曲线也只在这些时刻加点
-    if (d.live.lastResponse && d.live.lastResponse.atMs !== lastSampleAt) {
-      lastSampleAt = d.live.lastResponse.atMs;
-      history.push(d.live.lastResponse.tokensPerSec);
-      if (history.length > 60) history.shift();
-      draw();
-    }
-  } catch (e) { /* 服务尚未就绪 */ }
-  finally { setTimeout(loop, 1000); }
-}
-loop();
-</script>
-</html>`;
